@@ -68,6 +68,12 @@ function ff_h($str) {
     return htmlspecialchars((string) $str, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
+// Make a URL safe inside href="..." without turning & into &amp;, which the
+// oldest browsers may not decode in links.
+function ff_href($url) {
+    return strtr((string) $url, ['"' => '%22', "'" => '%27', '<' => '%3C', '>' => '%3E', ' ' => '%20']);
+}
+
 // A query string value, or '' if it's missing or not a plain string.
 function ff_param($name) {
     return (isset($_GET[$name]) && is_string($_GET[$name])) ? $_GET[$name] : '';
@@ -158,6 +164,7 @@ function ff_sign($kind, $value, $expiry) {
 }
 
 function ff_signed_query($param, $kind, $url) {
+    $url = trim($url); // the pages trim what they receive, so sign the same thing
     // Round to the hour so the same page always gets the same links for a
     // while, which keeps them cacheable.
     $expiry = (intdiv(time(), 3600) + 1) * 3600 + FF_LINK_LIFETIME;
@@ -201,8 +208,10 @@ function ff_box_token_is_valid($token) {
 }
 
 // Point every web link in a chunk of reader HTML back through FrogFind with a
-// fresh signature, and strip the rest of the tag's attributes.
+// fresh signature. Every other attribute goes, on links and on the other tags
+// the reader keeps, so nothing like onclick= or onfocus= survives.
 function ff_proxy_links($html) {
+    $html = preg_replace('/<(\/?)(ol|ul|li|br|p|small|font|b|i|strong|em|blockquote|h[1-6])\b[^>]*>/i', '<$1$2>', $html);
     return preg_replace_callback('/<a\s[^>]*>/i', function ($m) {
         if (preg_match('/\shref\s*=\s*(?:"([^"]*)"|\'([^\']*)\')/i', $m[0], $href)) {
             $url = html_entity_decode($href[1] !== '' ? $href[1] : (isset($href[2]) ? $href[2] : ''), ENT_QUOTES | ENT_HTML5, 'UTF-8');
@@ -210,7 +219,7 @@ function ff_proxy_links($html) {
                 return '<a href="' . ff_read_link($url) . '" rel="nofollow">';
             }
             if (preg_match('/^(mailto:|#)/i', $url)) {
-                return '<a href="' . ff_h($url) . '">';
+                return '<a href="' . ff_href($url) . '">';
             }
         }
         return '<a>';
@@ -345,6 +354,10 @@ function ff_fetch($url, $max_html_bytes, $max_other_bytes, $user_agent = FF_USER
                 return $result;
             }
         }
+        if (!filter_var($host, FILTER_VALIDATE_IP) && !preg_match('/^[a-z0-9._-]+$/', $host)) {
+            $result['error'] = "couldn't understand that address";
+            return $result;
+        }
         // Rebuild the URL from the parts we checked, so curl sees exactly the
         // host we looked up.
         $url = $scheme . '://' . (strpos($host, ':') !== false ? '[' . $host . ']' : $host)
@@ -363,6 +376,10 @@ function ff_fetch($url, $max_html_bytes, $max_other_bytes, $user_agent = FF_USER
         $body = '';
         $too_big = false;
         $ch = curl_init($url);
+        if (!$ch) {
+            $result['error'] = "couldn't understand that address";
+            return $result;
+        }
         $options = [
             CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_CONNECTTIMEOUT => FF_FETCH_TIMEOUT,
@@ -468,7 +485,15 @@ function ff_cache_put($kind, $key, $data) {
     // Write to a temp file and rename, so nobody reads half a file.
     $temp = $file . '.' . bin2hex(random_bytes(4)) . '.tmp';
     if (@file_put_contents($temp, $data) !== false && @rename($temp, $file)) {
-        ff_cache_cleanup();
+        // Tidy up after the visitor has their page, not before.
+        static $scheduled = false;
+        if (!$scheduled) {
+            $scheduled = true;
+            register_shutdown_function(function () {
+                if (function_exists('fastcgi_finish_request')) fastcgi_finish_request();
+                ff_cache_cleanup();
+            });
+        }
     } else {
         @unlink($temp);
     }

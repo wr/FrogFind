@@ -41,10 +41,10 @@
      <meta name="robots" content="noindex,nofollow">
  </head>
  <body>
-    <small><a href="<?php echo ff_h($back_url) ?>">< Back to previous page</a></small>
+    <small><a href="<?php echo ff_href($back_url) ?>">< Back to previous page</a></small>
     <p><small><b>Viewing image:</b> <?php echo ff_h($url) ?></small></p>
     <img src="<?php echo ff_image_src($url) ?>">
     <br><br>
-    <small><a href="<?php echo ff_h($back_url) ?>">< Back to previous page</a></small>
+    <small><a href="<?php echo ff_href($back_url) ?>">< Back to previous page</a></small>
  </body>
  </html>
